@@ -91,6 +91,11 @@ int main(int argc, char** argv) {
     while (clientfd) {
         char recv_buffer[5000] = {0};
         char send_buffer[5000] = {0};
+        
+        // try to send data first
+        size_t sent = input_sec(send_buffer, sizeof(send_buffer));
+        if (sent > 0) send(clientfd, send_buffer, sent, 0);
+        
         // receive data
         ssize_t recvd = recv(clientfd, &recv_buffer, sizeof(recv_buffer), 0);
         if (recvd > 0) {
@@ -99,9 +104,8 @@ int main(int argc, char** argv) {
         }
         else if (recvd == 0) break;
         else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            // send data
-            size_t sent = input_sec(send_buffer, sizeof(send_buffer));
-            if (sent > 0) send(clientfd, send_buffer, sent, 0);
+            // nothing to receive, continue loop
+            continue;
         } else {
             perror("connection went bad");
             break;

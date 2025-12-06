@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GEN_CERT="${SCRIPT_DIR}/../src/gen_cert"
+GEN_CERT="${SCRIPT_DIR}/../project/gen_cert"
 
 openssl genpkey -algorithm ec -pkeyopt ec_paramgen_curve:P-256 -outform DER -out "${SCRIPT_DIR}/server_key.bin"
 openssl genpkey -algorithm ec -pkeyopt ec_paramgen_curve:P-256 -outform DER -out "${SCRIPT_DIR}/server_key2.bin"
