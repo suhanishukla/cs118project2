@@ -8,7 +8,6 @@
 #include "io.h"
 #include "libsecurity.h"
 
-
 int state_sec = 0;
 char* hostname = NULL;
 EVP_PKEY* priv_key = NULL;
@@ -56,7 +55,6 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         
         size_t len = serialize_tlv(buf, client_hello);
         
-        // CRITICAL: Save to transcript buffer
         memcpy(ts, buf, len);
         ts_len = len;
         
@@ -67,11 +65,11 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
     case SERVER_SERVER_HELLO_SEND: {
         print("SEND SERVER HELLO");
 
-        // 1. Generate ephemeral keypair for ECDH
+        // generate ephemeral keypair for ECDH
         generate_private_key();
         derive_public_key();
 
-        // 2. Get client's ephemeral public key and derive the shared secret
+        //get client's ephemeral public key and derive the shared secret
         tlv* client_pubkey_tlv = get_tlv(client_hello, PUBLIC_KEY);
         if (!client_pubkey_tlv || !client_pubkey_tlv->val) {
             exit(6);
@@ -80,11 +78,11 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
 
         derive_secret();
 
-        // 3. Load certificate (for including in ServerHello)
+        // load certificate 
         load_certificate("server_cert.bin");
         tlv* cert = deserialize_tlv(certificate, cert_size);
 
-        // 4. Build nonce and public key TLVs
+        // build nonce and public key TLVs
         tlv* nonce_tlv = create_tlv(NONCE);
         uint8_t nonce[NONCE_SIZE];
         generate_nonce(nonce, NONCE_SIZE);
@@ -93,10 +91,10 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         tlv* public_key_tlv = create_tlv(PUBLIC_KEY);
         add_val(public_key_tlv, public_key, pub_key_size);
 
-        // 5. Load long-term server signing key (now safe to overwrite ec_priv_key)
+        // load long-term server signing key (now safe to overwrite ec_priv_key)
         load_private_key("server_key.bin");
 
-        // 6. Sign the handshake transcript (ClientHello, nonce, cert, server ephemeral pubkey)
+        // sign the handshake transcript (ClientHello, nonce, cert, server ephemeral pubkey)
         uint8_t sig_input[2000];
         size_t sig_input_len = 0;
         sig_input_len += serialize_tlv(sig_input, client_hello);
@@ -110,7 +108,7 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         tlv* signature = create_tlv(HANDSHAKE_SIGNATURE);
         add_val(signature, sig_val, signature_len);
 
-        // 7. Build and send ServerHello
+        // build and send ServerHello
         server_hello = create_tlv(SERVER_HELLO);
         add_tlv(server_hello, nonce_tlv);
         add_tlv(server_hello, cert);
@@ -119,7 +117,7 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
 
         ssize_t len = serialize_tlv(buf, server_hello);
 
-        // 8. Derive keys from the already-derived secret + transcript
+        // derive keys from the already-derived secret + transcript
         uint8_t salt[1500];
         size_t salt_len = 0;
         salt_len += serialize_tlv(salt, client_hello);
@@ -132,7 +130,7 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
     case CLIENT_FINISHED_SEND: {
         print("SEND FINISHED");
         
-        // Use the GLOBAL ts buffer
+        // use the GLOBAL ts buffer
         uint8_t transcript_hmac[32];
         hmac(transcript_hmac, ts, ts_len);
         
@@ -203,7 +201,7 @@ void output_sec(uint8_t* buf, size_t length) {
             exit(6);
         }
 
-        // Save client hello to transcript
+        // save client hello to transcript
         tlv* client_pubkey_tlv = get_tlv(client_hello, PUBLIC_KEY);
         if (!client_pubkey_tlv || !client_pubkey_tlv->val) {
             exit(6);
@@ -225,7 +223,7 @@ void output_sec(uint8_t* buf, size_t length) {
             exit(6);
         }
 
-        // Add server_hello to transcript
+        // add server_hello to transcript
         memcpy(ts + ts_len, buf, length);
         ts_len += length;
 
@@ -299,7 +297,7 @@ void output_sec(uint8_t* buf, size_t length) {
         load_peer_public_key(server_pubkey->val, server_pubkey->length);
         derive_secret();
         
-        // Use ts buffer for key derivation
+        // use ts buffer for key derivation
         derive_keys(ts, ts_len);
 
         state_sec = CLIENT_FINISHED_SEND;
