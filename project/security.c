@@ -67,22 +67,36 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
     case SERVER_SERVER_HELLO_SEND: {
         print("SEND SERVER HELLO");
 
+        // 1. Generate ephemeral keypair for ECDH
         generate_private_key();
         derive_public_key();
-        
+
+        // 2. Get client's ephemeral public key and derive the shared secret
+        tlv* client_pubkey_tlv = get_tlv(client_hello, PUBLIC_KEY);
+        if (!client_pubkey_tlv || !client_pubkey_tlv->val) {
+            exit(6);
+        }
+        load_peer_public_key(client_pubkey_tlv->val, client_pubkey_tlv->length);
+
+        derive_secret();
+
+        // 3. Load certificate (for including in ServerHello)
         load_certificate("server_cert.bin");
         tlv* cert = deserialize_tlv(certificate, cert_size);
 
+        // 4. Build nonce and public key TLVs
         tlv* nonce_tlv = create_tlv(NONCE);
-        uint8_t nonce[NONCE_SIZE]; 
+        uint8_t nonce[NONCE_SIZE];
         generate_nonce(nonce, NONCE_SIZE);
         add_val(nonce_tlv, nonce, NONCE_SIZE);
-        
+
         tlv* public_key_tlv = create_tlv(PUBLIC_KEY);
         add_val(public_key_tlv, public_key, pub_key_size);
 
+        // 5. Load long-term server signing key (now safe to overwrite ec_priv_key)
         load_private_key("server_key.bin");
-        
+
+        // 6. Sign the handshake transcript (ClientHello, nonce, cert, server ephemeral pubkey)
         uint8_t sig_input[2000];
         size_t sig_input_len = 0;
         sig_input_len += serialize_tlv(sig_input, client_hello);
@@ -92,10 +106,11 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
 
         uint8_t sig_val[128];
         size_t signature_len = sign(sig_val, sig_input, sig_input_len);
-        
+
         tlv* signature = create_tlv(HANDSHAKE_SIGNATURE);
         add_val(signature, sig_val, signature_len);
 
+        // 7. Build and send ServerHello
         server_hello = create_tlv(SERVER_HELLO);
         add_tlv(server_hello, nonce_tlv);
         add_tlv(server_hello, cert);
@@ -104,17 +119,13 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
 
         ssize_t len = serialize_tlv(buf, server_hello);
 
-        tlv* client_pubkey_tlv = get_tlv(client_hello, PUBLIC_KEY);
-        load_peer_public_key(client_pubkey_tlv->val, client_pubkey_tlv->length);
-        
-        derive_secret();
-        
+        // 8. Derive keys from the already-derived secret + transcript
         uint8_t salt[1500];
         size_t salt_len = 0;
         salt_len += serialize_tlv(salt, client_hello);
         salt_len += serialize_tlv(salt + salt_len, server_hello);
         derive_keys(salt, salt_len);
-        
+
         state_sec = SERVER_FINISHED_AWAIT;
         return len;
     }
