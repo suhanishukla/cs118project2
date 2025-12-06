@@ -34,82 +34,88 @@ void init_sec(int initial_state, char* host, bool bad_mac) {
     }
 }
 
+static void debug_hex(const char *label, const uint8_t *buf, size_t len) {
+    fprintf(stderr, "%s (%zu bytes):", label, len);
+    for (size_t i = 0; i < len; i++) {
+        if (i % 16 == 0) fprintf(stderr, "\n  ");
+        fprintf(stderr, "%02x ", buf[i]);
+    }
+    fprintf(stderr, "\n");
+}
+
 ssize_t input_sec(uint8_t* buf, size_t max_length) {
     switch (state_sec) {
     case CLIENT_CLIENT_HELLO_SEND: {
         print("SEND CLIENT HELLO");
-        //create nonce 
-        tlv* nonce = create_tlv(NONCE);
-        uint8_t nonce_val[32];
-        generate_nonce(nonce_val, 32);
-        add_val(nonce, nonce_val, 32);
-
-        //create public key tlv 
-        tlv* pubkey = create_tlv(PUBLIC_KEY);
-        add_val(pubkey, public_key, pub_key_size);
-
-        //create client hello
+        
         client_hello = create_tlv(CLIENT_HELLO);
-        add_tlv(client_hello, nonce);
-        add_tlv(client_hello, pubkey);
+        
+        tlv* nonce_tlv = create_tlv(NONCE);
+        uint8_t nonce[NONCE_SIZE];
+        generate_nonce(nonce, NONCE_SIZE);
+        add_val(nonce_tlv, nonce, NONCE_SIZE);
+        add_tlv(client_hello, nonce_tlv);
 
-        ssize_t len = serialize_tlv(buf, client_hello);
+        tlv* public_key_tlv = create_tlv(PUBLIC_KEY);
+        add_val(public_key_tlv, public_key, pub_key_size);
+        add_tlv(client_hello, public_key_tlv);
+        
+        size_t len = serialize_tlv(buf, client_hello);
         state_sec = CLIENT_SERVER_HELLO_AWAIT;
         return len;
     }
     case SERVER_SERVER_HELLO_SEND: {
         print("SEND SERVER HELLO");
-        //create nonce 
-        tlv* nonce = create_tlv(NONCE);
-        uint8_t nonce_val[32];
-        generate_nonce(nonce_val, 32);
-        add_val(nonce, nonce_val, 32);
 
-        //create cert tlv 
-        tlv* cert = create_tlv(CERTIFICATE);
-        add_val(cert, certificate, cert_size);
+        // create nonce tlv
+        tlv* nonce_tlv = create_tlv(NONCE);
+        uint8_t nonce[NONCE_SIZE]; 
+        generate_nonce(nonce, NONCE_SIZE);
+        add_val(nonce_tlv, nonce, NONCE_SIZE);
+        
+        tlv* cert = deserialize_tlv(certificate, cert_size);
 
-        //generate ephemeral key pair and save old key 
+        // create ephemeral public key pair
         EVP_PKEY* old_key = get_private_key();
         generate_private_key();
         derive_public_key();
-        EVP_PKEY* ephemeral_key = get_private_key();
+        EVP_PKEY* eph_key = get_private_key();
 
-        //create ephemeral public key tlv 
-        tlv* ephemeral_pubkey = create_tlv(PUBLIC_KEY);
-        add_val(ephemeral_pubkey, public_key, pub_key_size);
+        
+        // tlv for public key
+        tlv* public_key_tlv = create_tlv(PUBLIC_KEY);
+        add_val(public_key_tlv, public_key, pub_key_size);
 
-        //build server hello
-        server_hello = create_tlv(SERVER_HELLO);
-        add_tlv(server_hello, nonce);
-        add_tlv(server_hello, cert);
-        add_tlv(server_hello, ephemeral_pubkey);
-
-        //create signature over 
+        // create signature over nonce
         uint8_t sig_input[2000];
         size_t sig_input_len = 0;
         sig_input_len += serialize_tlv(sig_input, client_hello);
-        sig_input_len += serialize_tlv(sig_input + sig_input_len, nonce);
+        sig_input_len += serialize_tlv(sig_input + sig_input_len, nonce_tlv);
         sig_input_len += serialize_tlv(sig_input + sig_input_len, cert);
-        sig_input_len += serialize_tlv(sig_input + sig_input_len, ephemeral_pubkey);
+        sig_input_len += serialize_tlv(sig_input + sig_input_len, public_key_tlv);
 
-        //sign with server's private key 
-        set_private_key(old_key);
-        uint8_t sig_val[80];
-        size_t sig_len = sign(sig_val, sig_input, sig_input_len);
-
+        set_private_key(old_key); 
+        uint8_t sig_val[128];
+        size_t signature_len = sign(sig_val, sig_input, sig_input_len);
+        set_private_key(eph_key);
+        
+        // tlv for signature
         tlv* signature = create_tlv(HANDSHAKE_SIGNATURE);
-        add_val(signature, sig_val, sig_len);
+        add_val(signature, sig_val, signature_len);
 
-        //add signature to server hello
+        // create server hello
+        server_hello = create_tlv(SERVER_HELLO);
+        add_tlv(server_hello, nonce_tlv);
+        add_tlv(server_hello, cert);
+        add_tlv(server_hello, public_key_tlv);
         add_tlv(server_hello, signature);
 
-        //serialize 
         ssize_t len = serialize_tlv(buf, server_hello);
 
-        // Restore ephemeral key for DH
-        set_private_key(ephemeral_key);
-        
+        debug_hex("SERVER_HELLO", buf, len);
+
+        set_private_key(eph_key);
+
         // Derive keys
         uint8_t salt[1500];
         size_t salt_len = 0;
@@ -131,7 +137,6 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
     case CLIENT_FINISHED_SEND: {
         print("SEND FINISHED");
 
-        // Create transcript: HMAC of (client_hello + server_hello)
         uint8_t transcript_input[1500];
         size_t transcript_input_len = 0;
         transcript_input_len += serialize_tlv(transcript_input, client_hello);
@@ -143,7 +148,6 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         tlv* transcript = create_tlv(TRANSCRIPT);
         add_val(transcript, transcript_val, 32);
         
-        // Build Finished message
         tlv* finished = create_tlv(FINISHED);
         add_tlv(finished, transcript);
         
@@ -151,16 +155,14 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         
         free_tlv(finished);
         state_sec = DATA_STATE;
-        return len;        
+        return len;
     }
     case DATA_STATE: {
-        // Read from stdin
-        uint8_t plaintext[943]; // Max plaintext size
+        uint8_t plaintext[943];
         ssize_t n = input_io(plaintext, sizeof(plaintext));
         
         if (n <= 0) return 0;
         
-        // Encrypt (generates IV internally)
         uint8_t iv_val[16];
         uint8_t ciphertext_val[1024];
         size_t ciphertext_len = encrypt_data(iv_val, ciphertext_val, plaintext, n);
@@ -171,7 +173,6 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         tlv* ciphertext = create_tlv(CIPHERTEXT);
         add_val(ciphertext, ciphertext_val, ciphertext_len);
         
-        // Compute MAC over IV + Ciphertext (with TLV headers)
         uint8_t mac_input[2000];
         size_t mac_input_len = 0;
         mac_input_len += serialize_tlv(mac_input, iv);
@@ -180,7 +181,6 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         uint8_t mac_val[32];
         hmac(mac_val, mac_input, mac_input_len);
         
-        // Optionally corrupt MAC for testing
         if (inc_mac) {
             mac_val[0] ^= 1;
         }
@@ -188,7 +188,6 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         tlv* mac = create_tlv(MAC);
         add_val(mac, mac_val, 32);
         
-        // Build Data message
         tlv* data = create_tlv(DATA);
         add_tlv(data, iv);
         add_tlv(data, ciphertext);
@@ -209,7 +208,6 @@ void output_sec(uint8_t* buf, size_t length) {
     case SERVER_CLIENT_HELLO_AWAIT: {
         client_hello = deserialize_tlv(buf, length);
         if (!client_hello || client_hello->type != CLIENT_HELLO) {
-            fprintf(stderr, "invalid client hello");
             exit(6);
         }
 
@@ -218,96 +216,114 @@ void output_sec(uint8_t* buf, size_t length) {
     }
     case CLIENT_SERVER_HELLO_AWAIT: {
         print("RECEIVED SERVER HELLO");
+
+        // Parse the received TLV
         server_hello = deserialize_tlv(buf, length);
-        
         if (!server_hello || server_hello->type != SERVER_HELLO) {
             fprintf(stderr, "Invalid Server Hello\n");
+            exit(6);  // unexpected message
+        }
+
+        // Expected layout:
+        // Server-Hello = Nonce, Certificate, Public-Key, Handshake-Signature
+        tlv* nonce         = server_hello->children[0];
+        tlv* cert_tlv      = server_hello->children[1];  // CERTIFICATE TLV (0xA0)
+        tlv* server_pubkey = server_hello->children[2];  // ephemeral pubkey
+        tlv* handshake_sig = server_hello->children[3];
+
+        if (!nonce || !cert_tlv || !server_pubkey || !handshake_sig) {
+            fprintf(stderr, "Malformed Server Hello (missing children)\n");
             exit(6);
         }
-        
-        // Extract components using children array
-        tlv* nonce = server_hello->children[0];
-        tlv* cert_tlv = server_hello->children[1];
-        tlv* server_pubkey = server_hello->children[2];
-        tlv* handshake_sig = server_hello->children[3];
-        
-        // Parse certificate (it's a TLV containing nested TLVs)
-        tlv* certificate = deserialize_tlv(cert_tlv->val, cert_tlv->length);
-        
-        // Load CA public key
+
+        // Load CA public key for certificate verification
         load_ca_public_key("ca_public_key.bin");
 
-        // Certificate structure: DNS-Name, Public-Key, Lifetime, Signature
-        tlv* dns_name = certificate->children[0];
-        tlv* cert_pubkey = certificate->children[1];
-        tlv* lifetime = certificate->children[2];
-        tlv* cert_signature = certificate->children[3];
-        
-        // Build what was signed: DNS-Name || Public-Key || Lifetime
+        // Certificate structure inside cert_tlv:
+        // Certificate = DNS-Name, Public-Key, Lifetime, Signature
+        tlv* dns_name       = cert_tlv->children[0];
+        tlv* cert_pubkey    = cert_tlv->children[1];
+        tlv* lifetime       = cert_tlv->children[2];
+        tlv* cert_signature = cert_tlv->children[3];
+
+        if (!dns_name || !cert_pubkey || !lifetime || !cert_signature) {
+            fprintf(stderr, "Malformed certificate\n");
+            exit(1);
+        }
+
+        // Build what the CA signed: DNS-Name || Public-Key || Lifetime
         uint8_t cert_data[1000];
         size_t cert_data_len = 0;
         cert_data_len += serialize_tlv(cert_data, dns_name);
         cert_data_len += serialize_tlv(cert_data + cert_data_len, cert_pubkey);
         cert_data_len += serialize_tlv(cert_data + cert_data_len, lifetime);
-        
-        // Verify certificate signature
-        if (verify(cert_signature->val, cert_signature->length, 
-                   cert_data, cert_data_len, ec_ca_public_key) != 1) {
+
+        // Verify certificate signature with CA public key
+        if (verify(cert_signature->val, cert_signature->length,
+                cert_data, cert_data_len, ec_ca_public_key) != 1) {
             fprintf(stderr, "Certificate verification failed\n");
-            exit(1);
+            exit(1);  // bad certificate
         }
 
-        //  Verify DNS name
+        // Verify DNS name against hostname argument (if provided)
         if (hostname) {
             size_t hostname_len = strlen(hostname);
-            if (dns_name->length != hostname_len || 
+            // DNS name in cert might include null terminator
+            if ((dns_name->length != hostname_len && dns_name->length != hostname_len + 1) ||
                 memcmp(dns_name->val, hostname, hostname_len) != 0) {
                 fprintf(stderr, "DNS name mismatch\n");
-                exit(2);
+                exit(2);  // bad DNS name
             }
         }
-        
-        // Check certificate validity
-        uint64_t not_before, not_after;
-        memcpy(&not_before, lifetime->val, 8);
-        memcpy(&not_after, lifetime->val + 8, 8);
-        not_before = be64toh(not_before);
-        not_after = be64toh(not_after);
-        uint64_t now = time(NULL);
-        
-        if (now < not_before || now > not_after) {
-            fprintf(stderr, "Certificate expired or not yet valid\n");
+
+        // Check certificate validity window (Lifetime = notBefore || notAfter, both big-endian uint64)
+        if (lifetime->length != 16) {
+            fprintf(stderr, "Invalid lifetime length\n");
             exit(1);
         }
-        // Verify Server Hello signature
-        load_peer_public_key(cert_pubkey->val, cert_pubkey->length);
-        
-        // Build what was signed: client_hello || nonce || cert_tlv || server_pubkey
-        uint8_t sig_input[2000];
-        size_t sig_input_len = 0;
-        sig_input_len += serialize_tlv(sig_input, client_hello);
-        sig_input_len += serialize_tlv(sig_input + sig_input_len, nonce);
-        sig_input_len += serialize_tlv(sig_input + sig_input_len, cert_tlv);
-        sig_input_len += serialize_tlv(sig_input + sig_input_len, server_pubkey);
-        
-        if (verify(handshake_sig->val, handshake_sig->length,
-                   sig_input, sig_input_len, ec_peer_public_key) != 1) {
-            fprintf(stderr, "Handshake signature verification failed\n");
-            exit(3);
+        uint64_t not_before, not_after;
+        memcpy(&not_before, lifetime->val, 8);
+        memcpy(&not_after,  lifetime->val + 8, 8);
+        not_before = be64toh(not_before);
+        not_after  = be64toh(not_after);
+
+        uint64_t now = (uint64_t)time(NULL);
+        if (now < not_before || now > not_after) {
+            fprintf(stderr, "Certificate expired or not yet valid\n");
+            exit(1);  // treat as bad certificate
         }
 
-        // Derive keys
+        // Verify Server-Hello handshake signature:
+        // signed over: Client-Hello || Nonce || Certificate || Server-Ephemeral-Public-Key
+        load_peer_public_key(cert_pubkey->val, cert_pubkey->length);  // for verify()
+
+        uint8_t sig_input[2000];
+        size_t sig_input_len = 0;
+        sig_input_len += serialize_tlv(sig_input,                    client_hello);
+        sig_input_len += serialize_tlv(sig_input + sig_input_len,    nonce);
+        sig_input_len += serialize_tlv(sig_input + sig_input_len,    cert_tlv);
+        sig_input_len += serialize_tlv(sig_input + sig_input_len,    server_pubkey);
+
+        if (verify(handshake_sig->val, handshake_sig->length,
+                sig_input, sig_input_len, ec_peer_public_key) != 1) {
+            fprintf(stderr, "Handshake signature verification failed\n");
+            exit(3);  // bad signature
+        }
+
+        // Derive shared secret and ENC/MAC keys using Diffie-Hellman:
+        // our private key (already set) + server's ephemeral public key
         load_peer_public_key(server_pubkey->val, server_pubkey->length);
         derive_secret();
-        
+
+        // HKDF salt = Client-Hello || Server-Hello (full TLVs)
         uint8_t salt[1500];
         size_t salt_len = 0;
-        salt_len += serialize_tlv(salt, client_hello);
-        salt_len += serialize_tlv(salt + salt_len, server_hello);
-        
+        salt_len += serialize_tlv(salt,                 client_hello);
+        salt_len += serialize_tlv(salt + salt_len,      server_hello);
+
         derive_keys(salt, salt_len);
-        
-        free_tlv(certificate);
+
+        // All good – next time input_sec() is called, we will send Finished
         state_sec = CLIENT_FINISHED_SEND;
         break;
     }
@@ -316,14 +332,15 @@ void output_sec(uint8_t* buf, size_t length) {
         tlv* finished = deserialize_tlv(buf, length);
         
         if (!finished || finished->type != FINISHED) {
-            fprintf(stderr, "Invalid Finished message\n");
             exit(6);
         }
         
-        // Verify transcript
         tlv* received_transcript = finished->children[0];
         
-        // Compute expected transcript
+        if (!received_transcript) {
+            exit(6);
+        }
+        
         uint8_t transcript_input[1500];
         size_t transcript_input_len = 0;
         transcript_input_len += serialize_tlv(transcript_input, client_hello);
@@ -333,7 +350,6 @@ void output_sec(uint8_t* buf, size_t length) {
         hmac(expected_transcript, transcript_input, transcript_input_len);
         
         if (memcmp(received_transcript->val, expected_transcript, 32) != 0) {
-            fprintf(stderr, "Transcript verification failed\n");
             exit(4);
         }
         
@@ -345,16 +361,17 @@ void output_sec(uint8_t* buf, size_t length) {
         tlv* data = deserialize_tlv(buf, length);
         
         if (!data || data->type != DATA) {
-            fprintf(stderr, "Invalid Data message\n");
             exit(6);
         }
         
-        // Extract IV, Ciphertext, MAC using children array
         tlv* iv = data->children[0];
         tlv* ciphertext = data->children[1];
         tlv* received_mac = data->children[2];
         
-        // Verify MAC
+        if (!iv || !ciphertext || !received_mac) {
+            exit(6);
+        }
+        
         uint8_t mac_input[2000];
         size_t mac_input_len = 0;
         mac_input_len += serialize_tlv(mac_input, iv);
@@ -364,16 +381,13 @@ void output_sec(uint8_t* buf, size_t length) {
         hmac(expected_mac, mac_input, mac_input_len);
         
         if (memcmp(received_mac->val, expected_mac, 32) != 0) {
-            fprintf(stderr, "MAC verification failed\n");
             exit(5);
         }
         
-        // Decrypt
         uint8_t plaintext[1024];
         size_t plaintext_len = decrypt_cipher(plaintext, ciphertext->val, 
                                              ciphertext->length, iv->val);
         
-        // Write to stdout
         output_io(plaintext, plaintext_len);
         
         free_tlv(data);
