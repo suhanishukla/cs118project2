@@ -106,7 +106,7 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         tlv* signature = create_tlv(HANDSHAKE_SIGNATURE);
         add_val(signature, sig_val, signature_len);
 
-        // Construct Server Hello
+        // finish the hello tlv
         server_hello = create_tlv(SERVER_HELLO);
         add_tlv(server_hello, nonce_tlv);
         add_tlv(server_hello, cert);
@@ -115,7 +115,7 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
 
         ssize_t len = serialize_tlv(buf, server_hello);
 
-        // Prepare Salt (Transcript)
+        // salt for key derivation
         uint8_t salt[2000]; 
         size_t salt_len = 0;
         salt_len += serialize_tlv(salt, client_hello);
@@ -231,12 +231,12 @@ void output_sec(uint8_t* buf, size_t length) {
         memcpy(ts + ts_len, buf, length);
         ts_len += length;
 
-        // Expected layout:
-        // Server-Hello = Nonce, Certificate, Public-Key, Handshake-Signature
-        tlv* nonce         = server_hello->children[0];
-        tlv* cert_tlv      = server_hello->children[1];  // CERTIFICATE TLV (0xA0)
-        tlv* server_pubkey = server_hello->children[2];  // ephemeral pubkey
-        tlv* handshake_sig = server_hello->children[3];
+    
+        
+        tlv* nonce = get_tlv(server_hello, NONCE);
+        tlv* cert_tlv      = get_tlv(server_hello, CERTIFICATE);
+        tlv* server_pubkey = get_tlv(server_hello, PUBLIC_KEY);
+        tlv* handshake_sig = get_tlv(server_hello, HANDSHAKE_SIGNATURE);
 
         if (!nonce || !cert_tlv || !server_pubkey || !handshake_sig) {
             fprintf(stderr, "Malformed Server Hello (missing children)\n");
@@ -246,10 +246,10 @@ void output_sec(uint8_t* buf, size_t length) {
         // Load CA public key for certificate verification
         load_ca_public_key("ca_public_key.bin");
 
-        tlv* dns_name       = cert_tlv->children[0];
-        tlv* cert_pubkey    = cert_tlv->children[1];
-        tlv* lifetime       = cert_tlv->children[2];
-        tlv* cert_signature = cert_tlv->children[3];
+        tlv* dns_name       = get_tlv(cert_tlv, DNS_NAME);
+        tlv* cert_pubkey    = get_tlv(cert_tlv, PUBLIC_KEY);
+        tlv* lifetime       = get_tlv(cert_tlv, LIFETIME);
+        tlv* cert_signature = get_tlv(cert_tlv, SIGNATURE);
 
         if (!dns_name || !cert_pubkey || !lifetime || !cert_signature) {
             fprintf(stderr, "Malformed Certificate (missing fields)\n");
@@ -338,9 +338,9 @@ void output_sec(uint8_t* buf, size_t length) {
             exit(6);
         }
         
-        tlv* iv = data->children[0];
-        tlv* ciphertext = data->children[1];
-        tlv* received_mac = data->children[2];
+        tlv* iv = get_tlv(data, IV);
+        tlv* ciphertext = get_tlv(data, CIPHERTEXT);
+        tlv* received_mac = get_tlv(data, MAC);
         
         if (!iv || !ciphertext || !received_mac) {
             exit(6);
