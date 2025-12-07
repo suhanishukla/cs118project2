@@ -38,16 +38,12 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
     case CLIENT_CLIENT_HELLO_SEND: {
         print("SEND CLIENT HELLO");
 
-
-
         client_hello = create_tlv(CLIENT_HELLO);
-
 
         tlv* nonce_tlv = create_tlv(NONCE);
         uint8_t nonce[NONCE_SIZE];     
         add_val(nonce_tlv, nonce, NONCE_SIZE);
         add_tlv(client_hello, nonce_tlv);
-
 
         tlv* public_key_tlv = create_tlv(PUBLIC_KEY);
         add_val(public_key_tlv, public_key, pub_key_size);
@@ -55,11 +51,8 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         
         size_t len = serialize_tlv(buf, client_hello);
 
-
-
         memcpy(ts, buf, len);
         ts_len = len;
-
 
         printf("Client Hello Length: %zu\n", len);
         printf("Client Hello Content: ");
@@ -77,12 +70,8 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         uint8_t nonce[NONCE_SIZE]; 
         generate_nonce(nonce, NONCE_SIZE);
         add_val(nonce_tlv, nonce, NONCE_SIZE);
-
-        
-        
+   
         tlv* cert = deserialize_tlv(certificate, cert_size);
-
-         
     
         generate_private_key(); 
         derive_public_key();
@@ -95,27 +84,20 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
 
         derive_secret();
 
-
         // Create TLV for the Ephemeral Public Key
         tlv* public_key_tlv = create_tlv(PUBLIC_KEY);
         add_val(public_key_tlv, public_key, pub_key_size);
-
-
-
 
         load_private_key("server_key.bin");
         uint8_t sig_input[2000];
         size_t sig_input_len = 0;
         
-    
         sig_input_len += serialize_tlv(sig_input, client_hello);
         sig_input_len += serialize_tlv(sig_input + sig_input_len, nonce_tlv);
         sig_input_len += serialize_tlv(sig_input + sig_input_len, cert);
         sig_input_len += serialize_tlv(sig_input + sig_input_len, public_key_tlv);
         
         printf("Transcript Length First: %zu\n", sig_input_len);
-        
- 
         
         uint8_t sig_val[128]; 
         size_t signature_len = sign(sig_val, sig_input, sig_input_len);
@@ -124,7 +106,7 @@ ssize_t input_sec(uint8_t* buf, size_t max_length) {
         tlv* signature = create_tlv(HANDSHAKE_SIGNATURE);
         add_val(signature, sig_val, signature_len);
 
-        // 5. Construct Server Hello
+        // Construct Server Hello
         server_hello = create_tlv(SERVER_HELLO);
         add_tlv(server_hello, nonce_tlv);
         add_tlv(server_hello, cert);
@@ -295,7 +277,6 @@ void output_sec(uint8_t* buf, size_t length) {
                 exit(2);
             }
         }
-
 
         load_peer_public_key(cert_pubkey->val, cert_pubkey->length);
 
