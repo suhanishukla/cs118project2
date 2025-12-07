@@ -1,5 +1,7 @@
 # CS 118 Fall 25 Project 2
 
+Contributors: Sneha Agarwal, Vivek Garg, Suhani Shukla
+
 The goal of Project 2 is to implement a TLS-like authenticated key exchange. All security messages follow TLV format. 
 
 For the client hello, the client generates an ephemeral EC key pair and 32-byte nonce. It builds a nonce and ephemeral public key wrapped inside a client-hello TLV. The client serailizes and stores the full TLV to use in server-hello signature verification, salt, and finished transcript HMAC.  
